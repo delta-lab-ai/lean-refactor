@@ -1,0 +1,10 @@
+{"name": "Box.BoundedInterval.exists_points_with_diff", "input_cost": 0.170969, "output_cost": 0.77367, "total_cost": 0.944639}
+{"name": "IsElementary.measure_of_translate", "input_cost": 0.254671, "output_cost": 0.894805, "total_cost": 1.149476}
+{"name": "DyadicCube.nesting", "input_cost": 0.406863, "output_cost": 1.12762, "total_cost": 1.534483}
+{"name": "Lebesgue_outer_measure_eq_nat_indexed", "input_cost": 0.198023, "output_cost": 0.831925, "total_cost": 1.029948}
+{"name": "Chapter5.Sequence.equiv_example", "input_cost": 0.128326, "output_cost": 0.75692, "total_cost": 0.885246}
+{"name": "Filter.Tendsto.of_div'", "input_cost": 0.205911, "output_cost": 0.843635, "total_cost": 1.049546}
+{"name": "PikhurkoN5.triangle_or_blueStar_from_block2", "input_cost": 0.246706, "output_cost": 0.838415, "total_cost": 1.085121}
+{"name": "AppendixB.PosintDecimal.exists_unique", "input_cost": 0.163799, "output_cost": 0.753395, "total_cost": 0.917194}
+{"name": "IsElementary.measure_le_finset_boxes_volume'", "input_cost": 0.195684, "output_cost": 0.763395, "total_cost": 0.959079}
+{"name": "Box.sum_volume_eq", "input_cost": 0.17033, "output_cost": 0.8438, "total_cost": 1.01413}

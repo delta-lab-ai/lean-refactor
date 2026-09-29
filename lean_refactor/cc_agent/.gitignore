@@ -1,0 +1,36 @@
+# Python cache / build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Packaging/build outputs
+*.egg-info/
+dist/
+build/
+
+# Run outputs (do not commit)
+results/
+results/**
+
+# Local Claude/MCP state
+.claude/
+.mcp.json
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+
+# Keep workspace tracked, but ignore heavy build/cache artifacts inside it
+workspace/**/.lake/
+workspace/**/.cache/
+workspace/**/.elan/
+workspace/**/.direnv/
+workspace/**/*.olean
+
