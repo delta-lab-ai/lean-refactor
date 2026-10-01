@@ -62,8 +62,8 @@ PROMPT_TEMPLATE_PATH = PROJECT_DIR / "prompts" / "prompt_golf.txt"
 CHECK_PROOF_PATH = PROJECT_DIR / "tools" / "check_proof.py"
 
 MODEL_ALIASES = {
-    "opus": "claude-opus-5",
-    "sonnet": "claude-sonnet-5",
+    "opus": "claude-opus-5-5",
+    "sonnet": "claude-sonnet-5-5",
     "haiku": "claude-haiku-4-5-20251001",
 }
 
