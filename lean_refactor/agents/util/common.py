@@ -783,6 +783,35 @@ def load_prompt(name: str, **kwargs: str) -> str:
     return _env.get_template(f"{name}.md").render(**kwargs)
 
 
+def select_objective_prompt(name: str, prompt_kwargs: dict[str, Any], state: dict[str, Any]) -> str:
+    """
+    Pick the prompt variant matching the state's optimization objective.
+
+    In multi-objective mode this returns the ``<name>-multi-obj`` variant and adds the
+    objective's weights to ``prompt_kwargs``; otherwise it returns
+    ``name`` unchanged.
+
+    Parameters
+    ----------
+    name: str
+        The base template name, without the .md extension.
+    prompt_kwargs: dict[str, Any]
+        The kwargs the template will be rendered with (updated in place).
+    state: dict[str, Any]
+        The flowing proof state.
+
+    Returns
+    -------
+    str
+        The template name to load.
+    """
+    if not state.get("multi_objective"):
+        return name
+    prompt_kwargs["length_weight"] = state.get("length_weight", 1.0)
+    prompt_kwargs["heartbeat_weight"] = state.get("heartbeat_weight", 0.0)
+    return f"{name}-multi-obj"
+
+
 def get_error_str(code: str, errors: list[dict], error_thres: bool) -> str:  # noqa: C901
     """
     Given the code and errors from the previous proof attempt, this function returns a string

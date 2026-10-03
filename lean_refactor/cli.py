@@ -306,6 +306,11 @@ def _process_single_planner_theorem_optimization(
             init_optim=init_optim,
             header=header,
             use_tactic_style=use_tactic_style,
+            multi_objective=config_params.get("multi_objective", False),
+            length_weight=config_params.get("length_weight", 1.0),
+            heartbeat_weight=config_params.get("heartbeat_weight", 0.0),
+            lean_workspace_path=lean_workspace_path,
+            original_src=src,
         )
         state_manager = PlannerOptimizerStateManager(state=initial_state)
 
@@ -747,6 +752,9 @@ def process_planner_optimizations_from_jsonl_parallel(
     compiler: str = "lean_client",
     use_tactic_style: bool = False,
     create_optimized_project: bool = False,
+    multi_objective: bool = False,
+    length_weight: float = 1.0,
+    heartbeat_weight: float = 0.0,
 ) -> None:
     """
     Process all theorems from a JSONL file for planner-based optimization in parallel.
@@ -867,6 +875,9 @@ def process_planner_optimizations_from_jsonl_parallel(
         "init_optim": init_optim,
         "compiler": compiler,
         "use_tactic_style": use_tactic_style,
+        "multi_objective": multi_objective,
+        "length_weight": length_weight,
+        "heartbeat_weight": heartbeat_weight,
     }
 
     # Create shared LeanClientScheduler in main process
@@ -1072,6 +1083,17 @@ def optimize(
         help="After optimizing, copy the Lean workspace to <workspace>_optimized with the "
         "optimized proofs swapped in and re-verify each file via lake build",
     ),
+    multi_objective: bool = typer.Option(
+        False,
+        "--multi-objective",
+        "-mo",
+        help="Accept a candidate iff it improves the weighted score "
+        "length-weight * length/original_length + heartbeat-weight * heartbeats/original_heartbeats",
+    ),
+    length_weight: float = typer.Option(1.0, "--length-weight", "-lw", help="Weight of proof length (with --multi-objective)"),
+    heartbeat_weight: float = typer.Option(
+        0.0, "--heartbeat-weight", "-hw", help="Weight of compilation heartbeats (with --multi-objective)"
+    ),
 ) -> None:
     """
     Proof Optimizer: Iteratively optimize Lean 4 proofs to reduce their length.
@@ -1154,6 +1176,9 @@ def optimize(
             compiler=compiler,
             use_tactic_style=use_tactic_style,
             create_optimized_project=create_optimized_project,
+            multi_objective=multi_objective,
+            length_weight=length_weight,
+            heartbeat_weight=heartbeat_weight,
         )
     else:
         raise Exception("No valid input proof option provided: only support --proof-jsonl for now")

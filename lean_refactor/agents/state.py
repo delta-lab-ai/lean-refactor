@@ -221,6 +221,10 @@ class PlannerOptimizedProofState(TypedDict):
     dependencies: NotRequired[str]
     header: NotRequired[str]
     use_tactic_style: NotRequired[bool]
+    # Multi-objective optimization settings (used for prompt selection)
+    multi_objective: NotRequired[bool]
+    length_weight: NotRequired[float]
+    heartbeat_weight: NotRequired[float]
 
 
 class PlannerOptimizedProofStates(TypedDict):

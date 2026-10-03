@@ -20,7 +20,13 @@ from lean_refactor.agents.state import (
     PlannerOptimizedProofState,
     PlannerOptimizedProofStates,
 )
-from lean_refactor.agents.util.common import LLMParsingError, TokenTracker, get_llm_response_content, load_prompt
+from lean_refactor.agents.util.common import (
+    LLMParsingError,
+    TokenTracker,
+    get_llm_response_content,
+    load_prompt,
+    select_objective_prompt,
+)
 from lean_refactor.agents.util.debug import log_llm_prompt, log_llm_response
 
 
@@ -184,14 +190,14 @@ def _planner(
         #     )
         #     prompt_kwargs["successful_plans"] = successful_plans_str
 
-        prompt_name = "planner-update"
+        prompt_name = select_objective_prompt("planner-update", prompt_kwargs, state)
         prompt = load_prompt(
             prompt_name, use_tactic_style=use_tactic_style or state.get("use_tactic_style", False), **prompt_kwargs
         )
         log_llm_prompt("PLANNER_AGENT", prompt, prompt_name)
     else:
         # Initial planning
-        prompt_name = "planner-initial"
+        prompt_name = select_objective_prompt("planner-initial", prompt_kwargs, state)
         prompt = load_prompt(
             prompt_name, use_tactic_style=use_tactic_style or state.get("use_tactic_style", False), **prompt_kwargs
         )

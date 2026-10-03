@@ -33,6 +33,9 @@ class GolfTaskMetadata:
     model: Optional[str] = None          # e.g. "opus", "sonnet", "haiku"
     effort: Optional[str] = None         # e.g. "low", "medium", "high", "max"
     max_budget_usd: Optional[float] = None
+    # Multi-objective mode: written to <task_dir>/objective.json for check_proof.py
+    # (length_weight, heartbeat_weight, initial_length, initial_heartbeat, project_root, heartbeat_timeout)
+    objective: Optional[dict] = None
     task_id: str = field(default="")
 
     def __post_init__(self):
@@ -84,6 +87,10 @@ class GolfTaskResult:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    # Multi-objective mode only (None otherwise)
+    initial_heartbeat: Optional[int] = None
+    final_heartbeat: Optional[int] = None
+    final_score: Optional[float] = None
 
     @property
     def duration_seconds(self) -> float:
@@ -104,8 +111,14 @@ class GolfTaskResult:
             return 0.0
         return round(100.0 * self.tokens_saved / self.initial_length, 2)
 
+    @property
+    def heartbeat_reduction_pct(self) -> Optional[float]:
+        if not self.initial_heartbeat or self.final_heartbeat is None:
+            return None
+        return round(100.0 * (self.initial_heartbeat - self.final_heartbeat) / self.initial_heartbeat, 2)
+
     def to_dict(self) -> dict:
-        return {
+        data = {
             "task_id": self.task_id,
             "name": self.name,
             "success": self.success,
@@ -127,3 +140,11 @@ class GolfTaskResult:
             "cache_creation_tokens": self.cache_creation_tokens,
             "total_input_tokens": self.total_input_tokens,
         }
+        if self.final_score is not None:
+            data.update({
+                "initial_heartbeat": self.initial_heartbeat,
+                "final_heartbeat": self.final_heartbeat,
+                "heartbeat_reduction_pct": self.heartbeat_reduction_pct,
+                "final_score": self.final_score,
+            })
+        return data

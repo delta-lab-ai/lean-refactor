@@ -103,6 +103,30 @@ JSONL with `{"name": ..., "total_cost": ...}` per line (`name` must match the ev
 `total_cost` is floored to 2 decimals and passed as `--max-budget-usd`. Names missing from the
 price file fall back to `$0.30` with a warning. Each task's budget is logged before it starts.
 
+### Multi-objective mode (length + heartbeats)
+
+`--multi_objective` replaces "shorter is better" with a weighted score (lower is better):
+
+```
+score = length_weight * length / initial_length + heartbeat_weight * heartbeats / initial_heartbeats
+```
+
+A proof is accepted iff it lowers the best score so far, so with a nonzero heartbeat weight a longer
+but cheaper-to-elaborate proof can be accepted. `check_proof.py` measures heartbeats with
+`tools/heartbeat.py`: it copies the file, adds `import Mathlib.Util.CountHeartbeats` (unless the file
+imports all of `Mathlib`), puts `#count_heartbeats in` before the declaration, and runs `lake env lean`.
+
+1. Collect the original proofs' heartbeats into `workspace/<project>/eval/heartbeats_<project>.jsonl`.
+   Give `prompts/collect_initial_heartbeats.md` to an agent, or run
+   `python3 tools/heartbeat.py --project-root workspace/<project>` directly.
+2. Run with the weights, e.g. `--multi_objective --length_weight 0 --heartbeat_weight 1`. The heartbeats
+   file is picked up automatically (override with `--initial_heartbeats`). Theorems missing from it are
+   measured on their first `check_proof.py` call.
+
+The settings are written to `<task_dir>/objective.json`. The agent gets `prompts/prompt_golf_multi_obj.txt`,
+and `result.json` / `summary.json` gain `initial_heartbeat`, `final_heartbeat`, `heartbeat_reduction_pct`
+and `final_score`.
+
 ### Resume behavior
 
 Re-running with the same `--output-dir` skips any task whose `result.json` has `success: true`.

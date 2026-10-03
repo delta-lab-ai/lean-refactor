@@ -86,8 +86,12 @@ class PlannerOptimizerSupervisorAgent:
         if self._state_manager.get_proofs_to_initial_optimize()["inputs"]:
             return "initial_optimize"
 
-        # 3. Check if budget is exhausted
-        if self._state_manager.is_budget_exhausted() or self._state_manager.shortest_proof_length <= 2:
+        # 3. Check if budget is exhausted, or the proof is already minimal.
+        # The length <= 2 early stop is skipped in multi-objective mode: the
+        # heartbeat objective can still improve after the length bottoms out.
+        if self._state_manager.is_budget_exhausted() or (
+            not self._state_manager.multi_objective and self._state_manager.shortest_proof_length <= 2
+        ):
             self._state_manager.is_finished = True
             self._state_manager.reason = "API budget exhausted. All pending compilations completed."
             return "finish"

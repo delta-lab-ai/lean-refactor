@@ -15,6 +15,7 @@ from lean_refactor.agents.state import (
     PlannerOptimizedProofState,
     PlannerOptimizedProofStates,
 )
+from lean_refactor.util.heartbeat import evaluate_multi_objective_acceptance
 from lean_refactor.utils import proof_length
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,11 @@ class PlannerOptimizerState:
         init_optim: bool = False,
         header: str | None = None,
         use_tactic_style: bool = False,
+        multi_objective: bool = False,
+        length_weight: float = 1.0,
+        heartbeat_weight: float = 0.0,
+        lean_workspace_path: str | None = None,
+        original_src: str | None = None,
     ):
         """
         Initialize planner optimizer state with a proof to optimize.
@@ -138,6 +144,21 @@ class PlannerOptimizerState:
             initial_state["dependencies"] = dependencies
         if header is not None:
             initial_state["header"] = header
+        if multi_objective:
+            initial_state["multi_objective"] = True
+            initial_state["length_weight"] = length_weight
+            initial_state["heartbeat_weight"] = heartbeat_weight
+
+        # Multi-objective acceptance: F_hat = w1 * f1/f1(original) + w2 * f2/f2(original),
+        # where f1 is proof length and f2 is heartbeats; the original proof scores w1 + w2.
+        self.multi_objective: bool = multi_objective
+        self.length_weight: float = length_weight
+        self.heartbeat_weight: float = heartbeat_weight
+        self.heartbeat_project_root: str | None = lean_workspace_path
+        self.original_src: str | None = original_src
+        self.initial_proof_length: int = initial_length
+        self.initial_heartbeat: int | None = None
+        self.best_score: float = length_weight + heartbeat_weight
 
         # Workflow state
         self.is_finished: bool = False
@@ -251,6 +272,11 @@ class PlannerOptimizerStateManager:
     def min_replans(self) -> int:
         """Get minimum replans to attempt."""
         return self._state.min_replans
+
+    @property
+    def multi_objective(self) -> bool:
+        """Whether the multi-objective acceptance rule is used."""
+        return self._state.multi_objective
 
     @property
     def shortest_proof(self) -> str:
@@ -639,8 +665,13 @@ class PlannerOptimizerStateManager:
                     }
                     state["compiled_proofs_history"].append(compiled_record)
 
-                    # Update shortest if this is shorter and record improvement
-                    if new_length < state["shortest_proof_length"]:
+                    # Update shortest if this is shorter (or, in multi-objective mode, if it
+                    # improves the weighted score) and record improvement
+                    if self._state.multi_objective:
+                        accepted = evaluate_multi_objective_acceptance(self._state, state, optimized, new_length)
+                    else:
+                        accepted = new_length < state["shortest_proof_length"]
+                    if accepted:
                         print(
                             f"New shortest proof: {state['shortest_proof_length']} --> {new_length} tokens", flush=True
                         )

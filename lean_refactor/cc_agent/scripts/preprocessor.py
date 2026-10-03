@@ -138,6 +138,11 @@ def prepare_task_files(task: GolfTaskMetadata) -> None:
     task.best_proof_file.write_text(task.src, encoding="utf-8")
     task.current_proof_file.write_text(task.src, encoding="utf-8")
 
+    # Multi-objective settings read by check_proof.py
+    if task.objective is not None:
+        objective_file = task.progress_file.parent / "objective.json"
+        objective_file.write_text(json.dumps(task.objective, indent=2, ensure_ascii=False), encoding="utf-8")
+
     # Seed progress file with attempt=0 (the original proof)
     task.progress_file.parent.mkdir(parents=True, exist_ok=True)
     if not task.progress_file.exists():

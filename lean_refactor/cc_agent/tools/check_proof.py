@@ -8,6 +8,15 @@ rejects incomplete proofs (`sorry`/`admit`), validates the theorem statement and
 context haven't changed, computes proof length, compares against the current best, and
 records progress.
 
+By default a proof is an improvement iff it is shorter than the best proof. If the task
+directory contains objective.json (written by the runner in multi-objective mode), the
+proof's Lean heartbeats are also measured (see heartbeat.py) and it is an improvement iff
+it lowers the weighted score
+
+    score = length_weight * length / initial_length + heartbeat_weight * heartbeats / initial_heartbeats
+
+below the best score so far (the original proof scores length_weight + heartbeat_weight).
+
 Only requires --proof-name, --temp-file-path, and --task-dir.
 All other paths are derived:
   - original file: derived from temp file path by reversing the naming convention
@@ -26,6 +35,8 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
+
+from heartbeat import DEFAULT_HEARTBEAT_TIMEOUT, count_heartbeats_for_src
 
 
 # ── Inlined proof utilities (from goedels-poetry/utils.py) ──────────────────
@@ -221,6 +232,90 @@ def _extract_statement(text: str) -> str | None:
     return without_attrs[start:end]
 
 
+# ── Multi-objective acceptance ──────────────────────────────────────────────
+
+
+def _best_score_so_far(progress_file: Path, objective: dict) -> tuple[float, int | None]:
+    """Score and heartbeats of the current best proof: the last improved attempt, else the original."""
+    best_score = objective["length_weight"] + objective["heartbeat_weight"]
+    best_heartbeat = objective.get("initial_heartbeat")
+    with open(progress_file, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if record.get("improved") and "score" in record:
+                best_score = record["score"]
+                best_heartbeat = record.get("heartbeat")
+    return best_score, best_heartbeat
+
+
+def _check_multi_objective(
+    objective: dict,
+    objective_file: Path,
+    original_file: Path,
+    original_proof_text: str,
+    current_proof_text: str,
+    new_length: int,
+    progress_file: Path,
+) -> tuple[dict, float] | None:
+    """
+    Measure the current proof's heartbeats and score it.
+
+    Returns the fields to add to the progress record (heartbeat, score, best_score,
+    improved) and the previous best score, or None after printing HEARTBEAT_ERROR
+    when the measurement failed.
+    """
+    length_weight = objective["length_weight"]
+    heartbeat_weight = objective["heartbeat_weight"]
+    initial_length = objective["initial_length"]
+    project_root = objective["project_root"]
+    timeout = objective.get("heartbeat_timeout", DEFAULT_HEARTBEAT_TIMEOUT)
+
+    heartbeat = None
+    if heartbeat_weight != 0:
+        if objective.get("initial_heartbeat") is None:
+            initial_heartbeat, error = count_heartbeats_for_src(
+                project_root, original_file, original_proof_text, timeout=timeout
+            )
+            if initial_heartbeat is None:
+                print("HEARTBEAT_ERROR: Could not measure the heartbeats of the ORIGINAL proof, so no attempt "
+                      "can be scored. This is an environment problem, not a problem with your proof. Stop.")
+                print(f"Details: {error}")
+                return None
+            objective["initial_heartbeat"] = initial_heartbeat
+            objective_file.write_text(json.dumps(objective, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        heartbeat, error = count_heartbeats_for_src(
+            project_root, original_file, original_proof_text, new_src=current_proof_text, timeout=timeout
+        )
+        if heartbeat is None:
+            print("HEARTBEAT_ERROR: Measuring the heartbeats of your proof failed, so nothing was recorded.")
+            print("If the details below show Lean errors, your proof does not compile in the full file: fix it "
+                  "and check again. If it is a timeout, your proof is too expensive: revert to the best proof.")
+            print(f"Details: {error}")
+            return None
+
+    score = length_weight * new_length / initial_length
+    if heartbeat_weight != 0:
+        score += heartbeat_weight * heartbeat / objective["initial_heartbeat"]
+    best_score, best_heartbeat = _best_score_so_far(progress_file, objective)
+    improved = score < best_score
+    fields = {
+        "heartbeat": heartbeat,
+        "best_heartbeat": heartbeat if improved else best_heartbeat,
+        "initial_heartbeat": objective.get("initial_heartbeat"),
+        "score": round(score, 6),
+        "best_score": round(score if improved else best_score, 6),
+        "improved": improved,
+    }
+    return fields, best_score
+
+
 # ── Main logic ───────────────────────────────────────────────────────────────
 
 
@@ -387,7 +482,20 @@ def main():
     with open(progress_file, "r", encoding="utf-8") as f:
         attempt_num = sum(1 for line in f if line.strip())
 
-    improved = new_length < best_length
+    objective_file = task_dir / "objective.json"
+    multi_obj = None
+    if objective_file.exists():
+        objective = json.loads(objective_file.read_text(encoding="utf-8"))
+        checked = _check_multi_objective(
+            objective, objective_file, original_file, original_proof_text, current_proof_text,
+            new_length, progress_file,
+        )
+        if checked is None:
+            sys.exit(0)
+        multi_obj, previous_best_score = checked
+        improved = multi_obj["improved"]
+    else:
+        improved = new_length < best_length
 
     # ── Record to progress file ──────────────────────────────────────────
 
@@ -399,12 +507,35 @@ def main():
         "improved": improved,
         "timestamp": datetime.now().isoformat(),
     }
+    if multi_obj is not None:
+        progress_record.update(multi_obj)
     with open(progress_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(progress_record, ensure_ascii=False) + "\n")
 
     # ── Output result ────────────────────────────────────────────────────
 
-    if improved:
+    if multi_obj is not None:
+        if improved:
+            best_proof_file.write_text(current_proof_text, encoding="utf-8")
+        hb_text = (
+            f", heartbeats {multi_obj['heartbeat']} (best {multi_obj['best_heartbeat']}, "
+            f"original {multi_obj['initial_heartbeat']})"
+            if multi_obj["heartbeat"] is not None
+            else ""
+        )
+        if improved:
+            print(f"IMPROVED: score {multi_obj['score']:.4f} (lower is better; previous best "
+                  f"{previous_best_score:.4f}). Length {new_length} tokens "
+                  f"(previous best {best_length}){hb_text}.")
+            print("Keep optimizing from this proof.")
+        else:
+            print(f"NOT_IMPROVED: score {multi_obj['score']:.4f} >= best {multi_obj['best_score']:.4f} "
+                  f"(lower is better). Length {new_length} tokens (best {best_length}){hb_text}.")
+            print(f"Read the best proof from {best_proof_file} and revert to it, then try a different approach:")
+            print("---BEST_PROOF_START---")
+            print(best_text)
+            print("---BEST_PROOF_END---")
+    elif improved:
         best_proof_file.write_text(current_proof_text, encoding="utf-8")
         diff = best_length - new_length
         print(f"IMPROVED: {new_length} tokens (was {best_length}, saved {diff} tokens)")

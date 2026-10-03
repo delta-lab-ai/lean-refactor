@@ -59,6 +59,7 @@ signal.signal(signal.SIGTERM, _kill_all_procs)
 # Absolute path to the prompt template and check_proof tool
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 PROMPT_TEMPLATE_PATH = PROJECT_DIR / "prompts" / "prompt_golf.txt"
+MULTI_OBJ_PROMPT_TEMPLATE_PATH = PROJECT_DIR / "prompts" / "prompt_golf_multi_obj.txt"
 CHECK_PROOF_PATH = PROJECT_DIR / "tools" / "check_proof.py"
 
 MODEL_ALIASES = {
@@ -124,7 +125,7 @@ def deepseek_env_overrides(effort: Optional[str]) -> dict[str, str]:
 
 def build_prompt(task: GolfTaskMetadata) -> str:
     """Build the full prompt for a golfing task by interpolating the template."""
-    template_path = PROMPT_TEMPLATE_PATH
+    template_path = MULTI_OBJ_PROMPT_TEMPLATE_PATH if task.objective is not None else PROMPT_TEMPLATE_PATH
     template = template_path.read_text(encoding="utf-8")
     print(f"[info] Using prompt template from path: {str(template_path)}")
 
@@ -155,6 +156,14 @@ def build_prompt(task: GolfTaskMetadata) -> str:
         current_proof_file=str(task.current_proof_file),
         task_dir=task_dir,
         formatted_contexts=formatted_contexts,
+        **(
+            {
+                "length_weight": task.objective["length_weight"],
+                "heartbeat_weight": task.objective["heartbeat_weight"],
+            }
+            if task.objective is not None
+            else {}
+        ),
     )
     return prompt
 
@@ -305,18 +314,22 @@ def extract_usage_tokens(claude_result: Optional[dict]) -> tuple[int, int, int, 
         return 0, 0, 0, 0
 
 
-def read_progress(progress_file: Path) -> tuple[int, int]:
+def read_progress(progress_file: Path) -> tuple[int, int, Optional[dict]]:
     """
-    Read progress file to get attempt count and best length.
+    Read progress file to get attempt count and the best proof.
+
+    The best proof is the last improved attempt. In length-only mode it is also the
+    shortest; in multi-objective mode it has the best score and may be longer.
 
     Returns:
-        (attempt_count, best_length)
+        (attempt_count, best_length, best_record); best_length is 10**9 and
+        best_record is None when no attempt improved.
     """
     if not progress_file.exists():
-        return 0, 0
+        return 0, 0, None
 
     attempt_count = 0
-    best_length = 10**9
+    best_record = None
     with open(progress_file, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -325,16 +338,13 @@ def read_progress(progress_file: Path) -> tuple[int, int]:
             try:
                 record = json.loads(line)
                 attempt_count += 1
-                length = record.get("length", 10**9)
                 if record.get("improved", False):
-                    best_length = min(best_length, length)
-                # Track the running best from the best_length field
-                rec_best = record.get("best_length", 10**9)
-                best_length = min(best_length, rec_best)
+                    best_record = record
             except json.JSONDecodeError:
                 continue
 
-    return attempt_count, best_length
+    best_length = best_record.get("length", 10**9) if best_record else 10**9
+    return attempt_count, best_length, best_record
 
 
 def run_golf_task(task: GolfTaskMetadata) -> GolfTaskResult:
@@ -461,13 +471,13 @@ def run_golf_task(task: GolfTaskMetadata) -> GolfTaskResult:
                 )
 
         # Read progress to determine outcome
-        attempts, best_length = read_progress(task.progress_file)
+        attempts, best_length, best_record = read_progress(task.progress_file)
 
         if best_length >= 10**9:
             # No successful check_proof calls — use initial length
             best_length = task.initial_proof_length
 
-        success = best_length < task.initial_proof_length
+        success = best_record is not None
 
     except Exception as e:
         error_message = str(e)
@@ -500,6 +510,8 @@ def run_golf_task(task: GolfTaskMetadata) -> GolfTaskResult:
         cache_read_tokens=cache_read_tokens,
         cache_creation_tokens=cache_creation_tokens,
     )
+    if task.objective is not None:
+        _set_multi_objective_result(result, task)
 
     print(f"\n[info] Task {task.name} completed:")
     print(f"  Success: {result.success}")
@@ -521,6 +533,22 @@ def run_golf_task(task: GolfTaskMetadata) -> GolfTaskResult:
         json.dump(result.to_dict(), f, indent=2, ensure_ascii=False)
 
     return result
+
+
+def _set_multi_objective_result(result: GolfTaskResult, task: GolfTaskMetadata) -> None:
+    """Fill the heartbeat/score fields of a multi-objective result from objective.json and progress."""
+    objective_file = task.progress_file.parent / "objective.json"
+    objective = task.objective
+    if objective_file.exists():
+        objective = json.loads(objective_file.read_text(encoding="utf-8"))
+    _, _, best_record = read_progress(task.progress_file)
+    result.initial_heartbeat = objective.get("initial_heartbeat")
+    if best_record is not None:
+        result.final_heartbeat = best_record.get("heartbeat")
+        result.final_score = best_record.get("score")
+    else:
+        result.final_heartbeat = result.initial_heartbeat
+        result.final_score = objective["length_weight"] + objective["heartbeat_weight"]
 
 
 def run_golf_tasks(

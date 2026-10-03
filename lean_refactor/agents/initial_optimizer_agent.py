@@ -17,7 +17,13 @@ from lean_refactor.agents.state import (
     PlannerOptimizedProofState,
     PlannerOptimizedProofStates,
 )
-from lean_refactor.agents.util.common import LLMParsingError, TokenTracker, get_llm_response_content, load_prompt
+from lean_refactor.agents.util.common import (
+    LLMParsingError,
+    TokenTracker,
+    get_llm_response_content,
+    load_prompt,
+    select_objective_prompt,
+)
 from lean_refactor.agents.util.debug import log_llm_prompt, log_llm_response
 from lean_refactor.utils import extract_code, is_tactic_style_proof, replace_statement_in_proof_mathlib_style
 
@@ -134,12 +140,13 @@ def _initial_optimizer(
         if state.get("dependencies"):
             prompt_kwargs["dependencies"] = state["dependencies"]
 
+        prompt_name = select_objective_prompt("planner-optimizer-direct", prompt_kwargs, state)
         prompt = load_prompt(
-            "planner-optimizer-direct",
+            prompt_name,
             use_tactic_style=use_tactic_style or state.get("use_tactic_style", False),
             **prompt_kwargs,
         )
-        log_llm_prompt("INITIAL_OPTIMIZER_AGENT", prompt, "planner-optimizer-direct")
+        log_llm_prompt("INITIAL_OPTIMIZER_AGENT", prompt, prompt_name)
 
         # Start fresh history with the prompt
         state["optimization_history"] = [HumanMessage(content=prompt)]

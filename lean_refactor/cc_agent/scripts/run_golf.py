@@ -152,7 +152,36 @@ def _result_from_json(task: GolfTaskMetadata, data: dict) -> GolfTaskResult:
         output_tokens=parse_int(data.get("output_tokens")),
         cache_read_tokens=parse_int(data.get("cache_read_tokens")),
         cache_creation_tokens=parse_int(data.get("cache_creation_tokens")),
+        initial_heartbeat=data.get("initial_heartbeat"),
+        final_heartbeat=data.get("final_heartbeat"),
+        final_score=data.get("final_score"),
     )
+
+
+def _load_initial_heartbeats(path: Path) -> dict[str, int]:
+    """Load {name: heartbeat} from a heartbeats JSONL written by tools/heartbeat.py (null rows skipped)."""
+    heartbeats: dict[str, int] = {}
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
+            if isinstance(rec.get("heartbeat"), int):
+                heartbeats[rec["name"]] = rec["heartbeat"]
+    print(f"[info] Loaded {len(heartbeats)} initial heartbeat(s) from {path}")
+    return heartbeats
+
+
+def _heartbeat_summary(results: list[GolfTaskResult]) -> dict:
+    """Average heartbeat reduction over results with measured heartbeats (multi-objective mode)."""
+    reductions = [r.heartbeat_reduction_pct for r in results if r.heartbeat_reduction_pct is not None]
+    if not reductions:
+        return {}
+    return {
+        "avg_heartbeat_reduction_percentage": round(sum(reductions) / len(reductions), 2),
+        "heartbeat_measured_tasks": len(reductions),
+    }
 
 
 class GolfRunner:
@@ -181,6 +210,11 @@ class GolfRunner:
         cleanup: bool = True,
         model: Optional[str] = None,
         effort: Optional[str] = None,
+        multi_objective: bool = False,
+        length_weight: float = 1.0,
+        heartbeat_weight: float = 0.0,
+        initial_heartbeats: Optional[str] = None,
+        heartbeat_timeout: float = 540.0,
     ) -> int:
         """
         Run proof optimization.
@@ -208,6 +242,16 @@ class GolfRunner:
                    per task instead of --model/--effort)
             effort: Thinking effort level ("low", "medium", "high", "max")
             timeout_minutes: Per-task wall-clock timeout in minutes; 0 = no limit (default: 60)
+            multi_objective: Accept a proof iff it lowers the score
+                             length_weight * length / initial_length
+                             + heartbeat_weight * heartbeats / initial_heartbeats
+                             instead of requiring a shorter proof
+            length_weight: Weight of proof length in the multi-objective score (default: 1.0)
+            heartbeat_weight: Weight of Lean heartbeats in the multi-objective score (default: 0.0)
+            initial_heartbeats: (optional) heartbeats JSONL of the original proofs; defaults to
+                                <project_root>/eval/heartbeats_<project>.jsonl when it exists.
+                                Missing theorems are measured on their first check_proof call.
+            heartbeat_timeout: Timeout in seconds for one heartbeat measurement (default: 540)
 
         Returns:
             0 on success, 1 on error
@@ -288,6 +332,37 @@ class GolfRunner:
                 print("[warn] No tasks to run.")
                 return 0
 
+            if multi_objective:
+                if length_weight == 0 and heartbeat_weight == 0:
+                    print("[error] --length_weight and --heartbeat_weight cannot both be 0", file=sys.stderr)
+                    return 1
+                heartbeats_map: dict[str, int] = {}
+                if heartbeat_weight != 0:
+                    heartbeats_path = (
+                        Path(initial_heartbeats)
+                        if initial_heartbeats
+                        else project_root_path / "eval" / f"heartbeats_{project_root_path.name}.jsonl"
+                    )
+                    if heartbeats_path.exists():
+                        heartbeats_map = _load_initial_heartbeats(heartbeats_path)
+                    elif initial_heartbeats:
+                        print(f"[error] Initial heartbeats file not found: {heartbeats_path}", file=sys.stderr)
+                        return 1
+                    else:
+                        print(f"[warn] {heartbeats_path} not found; original heartbeats will be measured "
+                              "on each task's first check_proof call")
+                print(f"[info] Multi-objective score = {length_weight} * length/initial_length + "
+                      f"{heartbeat_weight} * heartbeats/initial_heartbeats (lower is better)")
+                for task in tasks:
+                    task.objective = {
+                        "length_weight": length_weight,
+                        "heartbeat_weight": heartbeat_weight,
+                        "initial_length": task.initial_proof_length,
+                        "initial_heartbeat": heartbeats_map.get(task.name),
+                        "project_root": str(project_root_path),
+                        "heartbeat_timeout": heartbeat_timeout,
+                    }
+
             tasks_to_run, successful_tasks = prepare_tasks_for_resume(tasks)
 
             if not tasks_to_run:
@@ -350,6 +425,7 @@ class GolfRunner:
                         "total_final_tokens": total_final_tokens,
                         "total_tokens_saved": sum(max(0, r.tokens_saved) for r in results),
                         "avg_reduction_percentage": round(avg_reduction_percentage, 2),
+                        **_heartbeat_summary(results),
                         "total_cost_usd": sum(r.cost_usd for r in results),
                         "usage": {
                             "input_tokens": sum(r.input_tokens for r in results),
